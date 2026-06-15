@@ -20,9 +20,6 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/venv/bin:$PATH"
-ENV APP_HOST=0.0.0.0
-ENV APP_PORT=8000
-ENV AUTH_TOKEN=local-dev-token
 
 WORKDIR /app
 
@@ -36,9 +33,9 @@ RUN chown -R appuser:appgroup /app
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE 9000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3).read()" || exit 1
 
-CMD ["python", "-m", "uvicorn", "notify_app.main:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "src/worker/main.py"]

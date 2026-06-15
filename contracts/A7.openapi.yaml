@@ -1,0 +1,224 @@
+openapi: 3.1.0
+info:
+  title: Smart Campus — Notification Service (A7)
+  version: 1.0.0
+  description: |
+    API gửi cảnh báo đa kênh (SMS, Email, Push) cho hệ thống Smart Campus.
+    Dịch vụ này được dùng bởi Core Business để gửi thông báo cho người dùng.
+  contact:
+    name: API Support
+    email: support@campus.local
+servers:
+  - url: http://localhost:4010
+    description: Prism mock server
+tags:
+  - name: notifications
+    description: Quản lý gửi thông báo
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Kiểm tra trạng thái service
+      description: Trả về trạng thái hoạt động của dịch vụ Notification.
+      tags: [notifications]
+      security: []
+      responses:
+        '200':
+          description: Service hoạt động bình thường
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: notification-service
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: Lấy danh sách các thông báo đã gửi
+      description: API hỗ trợ query parameter để lọc theo trạng thái và phân trang.
+      tags: [notifications]
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Số lượng thông báo tối đa lấy về.
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [QUEUED, SENT, FAILED]
+          description: Lọc theo trạng thái thông báo.
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationResponse'
+        '400':
+          description: Lỗi parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+    post:
+      operationId: sendNotification
+      summary: Gửi một thông báo mới
+      description: |
+        Nhận yêu cầu gửi thông báo. Yêu cầu `Idempotency-Key` ở Header để dedupe.
+        Có hỗ trợ retry logic bằng cách xử lý idempotent.
+      tags: [notifications]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Khóa chống trùng lặp (dedupe).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+            examples:
+              valid_request:
+                value:
+                  alertId: 0196fb3d-4ad7-7d1e-9f49-5d5148d2babc
+                  channel: EMAIL
+                  recipient: security@campus.local
+                  message: Phát hiện truy cập trái phép
+      responses:
+        '201':
+          description: Yêu cầu gửi thông báo đã được ghi nhận
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+              examples:
+                created:
+                  value:
+                    notificationId: NOTIF-1234
+                    status: QUEUED
+                    channel: EMAIL
+                    sentAt: '2026-05-10T08:00:01Z'
+        '400':
+          description: Lỗi dữ liệu đầu vào (VD sai enum channel)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                invalid_channel:
+                  value:
+                    type: https://campus.local/problems/validation-error
+                    title: Validation error
+                    status: 400
+                    detail: channel must be EMAIL, SMS, or PUSH
+        '401':
+          description: Lỗi xác thực
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Trùng lặp (Dedupe) - Idempotency Key đã tồn tại
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                dedupe_error:
+                  value:
+                    type: https://campus.local/problems/conflict
+                    title: Conflict
+                    status: 409
+                    detail: Idempotency-Key already processed
+        '429':
+          description: Rate limit - Gửi quá nhiều yêu cầu
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                rate_limit:
+                  value:
+                    type: https://campus.local/problems/rate-limited
+                    title: Too Many Requests
+                    status: 429
+                    detail: Rate limit exceeded
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SendNotificationRequest:
+      type: object
+      required: [alertId, channel, recipient, message]
+      properties:
+        alertId:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [EMAIL, SMS, PUSH]
+        recipient:
+          type: string
+        message:
+          type: string
+
+    NotificationResponse:
+      type: object
+      required: [notificationId, status, channel, sentAt]
+      properties:
+        notificationId:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, SENT, FAILED]
+        channel:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string

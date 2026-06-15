@@ -1,71 +1,90 @@
-version: "3.8"
 
 services:
-  # Service API FastAPI
+  db:
+    image: postgres:15-alpine
+    container_name: fit4110-db-lab05
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-notifications_db}
+    ports:
+      - "5432:5432"
+    networks:
+      - team-internal
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-notifications_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: fit4110-rabbitmq-lab05
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - team-internal
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: fit4110-api-lab05
-    env_file:
-      - .env
-    depends_on:
-      db:
-        condition: service_healthy
-      ai-service:
-        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - APP_PORT=8000
+      - AUTH_TOKEN=${AUTH_TOKEN:-local-dev-token}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-notifications_db}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     networks:
       - team-internal
       - class-net
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: fit4110-worker-lab05
     ports:
-      - "${APP_PORT:-8000}:8000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # PostgreSQL database service
-  db:
-    image: postgres:15-alpine
-    container_name: fit4110-db-lab05
+      - "9000:9000"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-lab05}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lab05pass}
-      POSTGRES_DB: ${POSTGRES_DB:-iotdb}
-    volumes:
-      - db-data:/var/lib/postgresql/data
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-notifications_db}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     networks:
       - team-internal
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lab05}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # AI service mẫu dùng Python HTTP server hoặc FastAPI
-  ai-service:
-    image: python:3.11-slim
-    container_name: fit4110-ai-lab05
-    working_dir: /service
-    volumes:
-      - ./src/ai_service:/service
-    command: ["python", "main.py"]
-    networks:
-      - team-internal
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import requests; import sys; sys.exit(0) if requests.get('http://localhost:9000/health').status_code == 200 else sys.exit(1)\""]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
 networks:
   team-internal:
-    driver: bridge
+    name: team-internal
   class-net:
     external: true
 
 volumes:
-  db-data:
+  db_data:
